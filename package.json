@@ -1,0 +1,46 @@
+{
+  "name": "action-gh-release",
+  "version": "2.0.0",
+  "private": true,
+  "description": "GitHub Action for creating GitHub Releases",
+  "main": "lib/main.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "build-debug": "tsc && ncc build lib/main.js --v8-cache --source-map",
+    "typecheck": "tsc --noEmit",
+    "format": "prettier --write \"src/**/*.ts\" \"__tests__/**/*.ts\"",
+    "format-check": "prettier --check \"src/**/*.ts\" \"__tests__/**/*.ts\"",
+    "package": "tsc && ncc build lib/main.js --source-map --license licenses.txt",
+    "test": "vitest --run",
+    "all": "npm run typecheck && npm run format && npm run package && npm test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/step-security/action-gh-release.git"
+  },
+  "keywords": [
+    "actions"
+  ],
+  "author": "step-security",
+  "license": "MIT",
+  "dependencies": {
+    "@actions/core": "^3.0.0",
+    "axios": "1.13.6",
+    "@actions/github": "^9.0.0",
+    "@octokit/plugin-retry": "^8.1.0",
+    "@octokit/plugin-throttling": "^11.0.3",
+    "glob": "^13.0.6",
+    "mime-types": "^3.0.2"
+  },
+  "devDependencies": {
+    "@types/glob": "^9.0.0",
+    "@types/mime-types": "^3.0.1",
+    "@types/node": "^20.19.30",
+    "@vercel/ncc": "^0.38.4",
+    "@vitest/coverage-v8": "^4.1.0",
+    "prettier": "3.8.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.0"
+  }
+}
