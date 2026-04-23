@@ -27,7 +27,7 @@
   "dependencies": {
     "@actions/core": "^3.0.0",
     "axios": "1.13.6",
-    "@actions/github": "^9.0.0",
+    "@actions/github": "^9.1.0",
     "@octokit/plugin-retry": "^8.1.0",
     "@octokit/plugin-throttling": "^11.0.3",
     "glob": "^13.0.6",
