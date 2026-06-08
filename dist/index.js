@@ -41713,6 +41713,8 @@ globstar while`,t,d,e,f,m),this.matchOne(t.slice(d),e.slice(f),s))return this.de
 
 
 
+
+const DEFAULT_UPLOAD_CONCURRENCY = 4;
 const uploadUrl = (url) => {
     const templateMarkerPos = url.indexOf('{');
     if (templateMarkerPos > -1) {
@@ -41769,13 +41771,35 @@ const parseMakeLatest = (value) => {
     }
     return undefined;
 };
+const parseToken = (env) => {
+    const inputToken = env.INPUT_TOKEN?.trim();
+    if (inputToken) {
+        return inputToken;
+    }
+    return env.GITHUB_TOKEN?.trim() || '';
+};
+const parseConcurrency = (raw) => {
+    if (!raw) {
+        return DEFAULT_UPLOAD_CONCURRENCY;
+    }
+    const trimmed = raw.trim();
+    if (trimmed === '') {
+        return DEFAULT_UPLOAD_CONCURRENCY;
+    }
+    const parsed = Number(trimmed);
+    if (!Number.isFinite(parsed) || parsed < 1) {
+        console.warn(`⚠️ Invalid concurrency "${raw}", falling back to default (${DEFAULT_UPLOAD_CONCURRENCY}).`);
+        return DEFAULT_UPLOAD_CONCURRENCY;
+    }
+    return Math.floor(parsed);
+};
 const parseConfig = (env) => {
     return {
-        github_token: env.GITHUB_TOKEN || env.INPUT_TOKEN || '',
+        github_token: parseToken(env),
         github_ref: env.GITHUB_REF || '',
         github_repository: env.INPUT_REPOSITORY || env.GITHUB_REPOSITORY || '',
         input_name: env.INPUT_NAME,
-        input_tag_name: env.INPUT_TAG_NAME?.trim(),
+        input_tag_name: normalizeTagName(env.INPUT_TAG_NAME?.trim()),
         input_body: env.INPUT_BODY,
         input_body_path: env.INPUT_BODY_PATH,
         input_files: parseInputFiles(env.INPUT_FILES || ''),
@@ -41789,15 +41813,35 @@ const parseConfig = (env) => {
         input_target_commitish: env.INPUT_TARGET_COMMITISH || undefined,
         input_discussion_category_name: env.INPUT_DISCUSSION_CATEGORY_NAME || undefined,
         input_generate_release_notes: env.INPUT_GENERATE_RELEASE_NOTES === 'true',
+        input_previous_tag: env.INPUT_PREVIOUS_TAG?.trim() || undefined,
         input_append_body: env.INPUT_APPEND_BODY === 'true',
-        input_make_latest: parseMakeLatest(env.INPUT_MAKE_LATEST)
+        input_make_latest: parseMakeLatest(env.INPUT_MAKE_LATEST),
+        input_concurrency: parseConcurrency(env.INPUT_CONCURRENCY)
     };
+};
+const normalizeGlobPattern = (pattern, platform = process.platform) => {
+    if (platform === 'win32') {
+        return pattern.replace(/\\/g, '/');
+    }
+    return pattern;
+};
+const expandHomePattern = (pattern, homeDirectory = (0,external_os_namespaceObject.homedir)()) => {
+    if (pattern === '~') {
+        return homeDirectory;
+    }
+    if (pattern.startsWith('~/') || pattern.startsWith('~\\')) {
+        return external_path_.join(homeDirectory, pattern.slice(2));
+    }
+    return pattern;
+};
+const normalizeFilePattern = (pattern, platform = process.platform, homeDirectory = (0,external_os_namespaceObject.homedir)()) => {
+    return normalizeGlobPattern(expandHomePattern(pattern, homeDirectory), platform);
 };
 const paths = (patterns, cwd) => {
     return patterns.reduce((acc, pattern) => {
-        const matches = ts(pattern, { cwd, dot: true, absolute: false });
+        const matches = ts(normalizeFilePattern(pattern), { cwd, dot: true, absolute: false });
         const resolved = matches
-            .map(p => (cwd ? external_path_.join(cwd, p) : p))
+            .map(p => (cwd && !external_path_.isAbsolute(p) ? external_path_.join(cwd, p) : p))
             .filter(p => {
             try {
                 return (0,external_fs_.statSync)(p).isFile();
@@ -41811,10 +41855,10 @@ const paths = (patterns, cwd) => {
 };
 const unmatchedPatterns = (patterns, cwd) => {
     return patterns.reduce((acc, pattern) => {
-        const matches = ts(pattern, { cwd, dot: true, absolute: false });
+        const matches = ts(normalizeFilePattern(pattern), { cwd, dot: true, absolute: false });
         const files = matches.filter(p => {
             try {
-                const full = cwd ? external_path_.join(cwd, p) : p;
+                const full = cwd && !external_path_.isAbsolute(p) ? external_path_.join(cwd, p) : p;
                 return (0,external_fs_.statSync)(full).isFile();
             }
             catch {
@@ -41826,6 +41870,12 @@ const unmatchedPatterns = (patterns, cwd) => {
 };
 const isTag = (ref) => {
     return ref.startsWith('refs/tags/');
+};
+const normalizeTagName = (tag) => {
+    if (!tag) {
+        return tag;
+    }
+    return isTag(tag) ? tag.replace('refs/tags/', '') : tag;
 };
 const alignAssetName = (assetName) => {
     return assetName.replace(/ /g, '.');
@@ -41863,7 +41913,13 @@ class GitHubReleaser {
             params.make_latest = undefined;
         }
         if (params.generate_release_notes) {
-            const releaseNotes = await this.getReleaseNotes(params);
+            const releaseNotes = await this.getReleaseNotes({
+                owner: params.owner,
+                repo: params.repo,
+                tag_name: params.tag_name,
+                target_commitish: params.target_commitish,
+                previous_tag_name: params.previous_tag_name
+            });
             params.generate_release_notes = false;
             if (params.body) {
                 params.body = `${params.body}\n\n${releaseNotes.data.body}`;
@@ -41873,14 +41929,21 @@ class GitHubReleaser {
             }
         }
         params.body = params.body ? this.truncateReleaseNotes(params.body) : undefined;
-        return this.github.rest.repos.createRelease(params);
+        const { previous_tag_name, ...createParams } = params;
+        return this.github.rest.repos.createRelease(createParams);
     }
     async updateRelease(params) {
         if (typeof params.make_latest === 'string' && !['true', 'false', 'legacy'].includes(params.make_latest)) {
             params.make_latest = undefined;
         }
         if (params.generate_release_notes) {
-            const releaseNotes = await this.getReleaseNotes(params);
+            const releaseNotes = await this.getReleaseNotes({
+                owner: params.owner,
+                repo: params.repo,
+                tag_name: params.tag_name,
+                target_commitish: params.target_commitish,
+                previous_tag_name: params.previous_tag_name
+            });
             params.generate_release_notes = false;
             if (params.body) {
                 params.body = `${params.body}\n\n${releaseNotes.data.body}`;
@@ -41890,7 +41953,8 @@ class GitHubReleaser {
             }
         }
         params.body = params.body ? this.truncateReleaseNotes(params.body) : undefined;
-        return this.github.rest.repos.updateRelease(params);
+        const { previous_tag_name, ...updateParams } = params;
+        return this.github.rest.repos.updateRelease(updateParams);
     }
     async finalizeRelease(params) {
         return await this.github.rest.repos.updateRelease({
@@ -41919,39 +41983,57 @@ const mimeOrDefault = (path) => {
 const upload = async (config, github, url, path, currentAssets) => {
     const [owner, repo] = config.github_repository.split('/');
     const { name, mime, size } = asset(path);
-    const currentAsset = currentAssets.find(
-    // GitHub renames asset filenames with special characters; compare against the renamed version
-    ({ name: currentName }) => currentName === alignAssetName(name));
-    if (currentAsset) {
+    // Extract the release id from the upload URL so we can refresh asset
+    // listings when a concurrent workflow has changed them out from under us.
+    const releaseIdMatch = url.match(/\/releases\/(\d+)\/assets/);
+    const releaseId = releaseIdMatch ? Number(releaseIdMatch[1]) : undefined;
+    const matchesName = (a) => a.name === name || a.name === alignAssetName(name);
+    const deleteIfPresent = async (asset_id) => {
+        try {
+            await github.rest.repos.deleteReleaseAsset({ asset_id, owner, repo });
+        }
+        catch (err) {
+            // 404 means another workflow already deleted it — safe to ignore.
+            if (err?.status !== 404) {
+                throw err;
+            }
+        }
+    };
+    const existing = currentAssets.find(matchesName);
+    if (existing) {
         if (config.input_overwrite_files === false) {
             console.log(`Asset ${name} already exists and overwrite_files is false...`);
             return null;
         }
         else {
             console.log(`♻️ Deleting previously uploaded asset ${name}...`);
-            await github.rest.repos.deleteReleaseAsset({
-                asset_id: currentAsset.id || 1,
-                owner,
-                repo
-            });
+            await deleteIfPresent(existing.id || 1);
         }
     }
     console.log(`⬆️ Uploading ${name}...`);
     const endpoint = new URL(url);
     endpoint.searchParams.append('name', name);
-    const fh = await (0,external_fs_promises_namespaceObject.open)(path);
+    const doUpload = async () => {
+        const fh = await (0,external_fs_promises_namespaceObject.open)(path);
+        try {
+            return await github.request({
+                method: 'POST',
+                url: endpoint.toString(),
+                headers: {
+                    'content-length': `${size}`,
+                    'content-type': mime,
+                    authorization: `token ${config.github_token}`
+                },
+                data: fh.readableWebStream()
+            });
+        }
+        finally {
+            await fh.close();
+        }
+    };
     try {
-        const resp = await github.request({
-            method: 'POST',
-            url: endpoint.toString(),
-            headers: {
-                'content-length': `${size}`,
-                'content-type': mime,
-                authorization: `token ${config.github_token}`
-            },
-            data: fh.readableWebStream({ type: 'bytes' })
-        });
-        const json = resp.data;
+        let resp = await doUpload();
+        let json = resp.data;
         if (resp.status !== 201) {
             throw new Error(`Failed to upload release asset ${name}. received status code ${resp.status}\n${json.message}\n${JSON.stringify(json.errors)}`);
         }
@@ -41959,14 +42041,42 @@ const upload = async (config, github, url, path, currentAssets) => {
         return json;
     }
     catch (error) {
+        const status = error?.status ?? error?.response?.status;
+        const errorData = error?.response?.data;
+        // Race condition recovery: another workflow uploaded the same asset
+        // between our delete and our upload (or no prior asset existed and one
+        // appeared concurrently). Refresh the asset list, delete, retry once.
+        if (config.input_overwrite_files !== false &&
+            status === 422 &&
+            errorData?.errors?.[0]?.code === 'already_exists' &&
+            releaseId !== undefined) {
+            console.log(`⚠️ Asset ${name} already exists (race condition); refreshing assets and retrying once...`);
+            try {
+                const latest = await github.paginate(github.rest.repos.listReleaseAssets, {
+                    owner,
+                    repo,
+                    release_id: releaseId,
+                    per_page: 100
+                });
+                const collision = latest.find(matchesName);
+                if (collision) {
+                    await deleteIfPresent(collision.id);
+                    const resp = await doUpload();
+                    if (resp.status === 201) {
+                        console.log(`✅ Uploaded ${name}`);
+                        return resp.data;
+                    }
+                }
+            }
+            catch (refreshError) {
+                console.warn(`Race-condition recovery failed for ${name}: ${refreshError}`);
+            }
+        }
         if (config.input_fail_on_asset_upload_issue) {
             throw error;
         }
         core_error(`Failed to upload asset ${name}. Received error: ${error}`);
         return null;
-    }
-    finally {
-        await fh.close();
     }
 };
 const findTagFromReleases = async (releaser, owner, repo, tag) => {
@@ -41978,7 +42088,7 @@ const findTagFromReleases = async (releaser, owner, repo, tag) => {
     }
     return undefined;
 };
-const createNewRelease = async (tag, config, releaser, owner, repo, discussion_category_name, generate_release_notes, maxRetries) => {
+const createNewRelease = async (tag, config, releaser, owner, repo, discussion_category_name, generate_release_notes, previous_tag_name, maxRetries) => {
     const tag_name = tag;
     const name = config.input_name || tag;
     const body = releaseBody(config);
@@ -42002,7 +42112,8 @@ const createNewRelease = async (tag, config, releaser, owner, repo, discussion_c
             target_commitish,
             discussion_category_name,
             generate_release_notes,
-            make_latest
+            make_latest,
+            previous_tag_name
         });
         return rel.data;
     }
@@ -42032,19 +42143,48 @@ const createNewRelease = async (tag, config, releaser, owner, repo, discussion_c
         return release(config, releaser, maxRetries - 1);
     }
 };
+// Eagerly look up a release by its tag using the dedicated GitHub API endpoint.
+// Falls back to undefined on 404 so the caller can create a new release.
+const getReleaseByTagOrUndefined = async (releaser, owner, repo, tag) => {
+    try {
+        const { data } = await releaser.getReleaseByTag({ owner, repo, tag });
+        return data;
+    }
+    catch (error) {
+        if (error?.status === 404) {
+            return undefined;
+        }
+        // For drafts (which have no tag yet), getReleaseByTag may not find them.
+        // Fall back to the legacy pagination-based lookup so existing drafts
+        // matching the tag name are still found.
+        try {
+            return await findTagFromReleases(releaser, owner, repo, tag);
+        }
+        catch {
+            throw error;
+        }
+    }
+};
 const release = async (config, releaser, maxRetries = 3) => {
     if (maxRetries <= 0) {
         core_error(`❌ Too many retries. Aborting...`);
         throw new Error('Too many retries.');
     }
     const [owner, repo] = config.github_repository.split('/');
-    const tag = config.input_tag_name || (isTag(config.github_ref) ? config.github_ref.replace('refs/tags/', '') : '');
+    const tag = normalizeTagName(config.input_tag_name) ||
+        (isTag(config.github_ref) ? config.github_ref.replace('refs/tags/', '') : '');
     const discussion_category_name = config.input_discussion_category_name;
     const generate_release_notes = config.input_generate_release_notes;
+    const previous_tag_name = config.input_previous_tag;
+    if (generate_release_notes && previous_tag_name) {
+        console.log(`📝 Generating release notes using previous tag ${previous_tag_name}`);
+    }
     try {
-        const existingRelease = await findTagFromReleases(releaser, owner, repo, tag);
+        // Fast path: direct getReleaseByTag instead of paginating all releases.
+        // Falls back to pagination internally for draft-without-tag scenarios.
+        const existingRelease = await getReleaseByTagOrUndefined(releaser, owner, repo, tag);
         if (existingRelease === undefined) {
-            return await createNewRelease(tag, config, releaser, owner, repo, discussion_category_name, generate_release_notes, maxRetries);
+            return await createNewRelease(tag, config, releaser, owner, repo, discussion_category_name, generate_release_notes, previous_tag_name, maxRetries);
         }
         console.log(`Found release ${existingRelease.name} (with id=${existingRelease.id})`);
         const release_id = existingRelease.id;
@@ -42081,7 +42221,8 @@ const release = async (config, releaser, maxRetries = 3) => {
             prerelease,
             discussion_category_name,
             generate_release_notes,
-            make_latest
+            make_latest,
+            previous_tag_name
         });
         return rel.data;
     }
@@ -42090,7 +42231,7 @@ const release = async (config, releaser, maxRetries = 3) => {
             console.log(`⚠️ Unexpected error fetching GitHub release for tag ${config.github_ref}: ${error}`);
             throw error;
         }
-        return await createNewRelease(tag, config, releaser, owner, repo, discussion_category_name, generate_release_notes, maxRetries);
+        return await createNewRelease(tag, config, releaser, owner, repo, discussion_category_name, generate_release_notes, previous_tag_name, maxRetries);
     }
 };
 const finalizeRelease = async (config, releaser, rel, maxRetries = 3) => {
@@ -46455,14 +46596,25 @@ async function run() {
                 return json;
             };
             let results;
-            if (!config.input_preserve_order) {
-                results = await Promise.all(files.map(uploadFile));
-            }
-            else {
+            if (config.input_preserve_order) {
                 results = [];
                 for (const path of files) {
                     results.push(await uploadFile(path));
                 }
+            }
+            else {
+                const concurrency = Math.max(1, Math.min(config.input_concurrency, files.length || 1));
+                results = new Array(files.length);
+                let nextIndex = 0;
+                const worker = async () => {
+                    while (true) {
+                        const i = nextIndex++;
+                        if (i >= files.length)
+                            return;
+                        results[i] = await uploadFile(files[i]);
+                    }
+                };
+                await Promise.all(Array.from({ length: concurrency }, () => worker()));
             }
             const assets = results.filter(Boolean);
             setOutput('assets', assets);
