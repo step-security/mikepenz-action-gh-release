@@ -11,9 +11,10 @@
     "typecheck": "tsc --noEmit",
     "format": "prettier --write \"src/**/*.ts\" \"__tests__/**/*.ts\"",
     "format-check": "prettier --check \"src/**/*.ts\" \"__tests__/**/*.ts\"",
-    "package": "tsc && ncc build lib/main.js --source-map --license licenses.txt",
+    "package": "tsc && ncc build lib/main.js --source-map --license licenses.txt --minify",
     "test": "vitest --run",
-    "all": "npm run typecheck && npm run format && npm run package && npm test"
+    "all": "npm run typecheck && npm run format && npm run package && npm test",
+    "fmtcheck": "prettier --check \"src/**/*.ts\" \"__tests__/**/*.ts\""
   },
   "repository": {
     "type": "git",
@@ -36,10 +37,10 @@
   "devDependencies": {
     "@types/mime-types": "^3.0.1",
     "@types/node": "^24.12.2",
-    "@vercel/ncc": "^0.38.4",
+    "@vercel/ncc": "^0.44.0",
     "@vitest/coverage-v8": "^4.1.5",
-    "prettier": "3.8.3",
-    "typescript": "^6.0.3",
+    "prettier": "3.9.6",
+    "typescript": "^7.0.0",
     "vitest": "^4.1.5"
   }
 }
