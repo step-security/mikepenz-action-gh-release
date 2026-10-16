@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit",
     "format": "prettier --write \"src/**/*.ts\" \"__tests__/**/*.ts\"",
     "format-check": "prettier --check \"src/**/*.ts\" \"__tests__/**/*.ts\"",
-    "package": "tsc && ncc build lib/main.js --source-map --license licenses.txt --minify",
+    "package": "tsc && ncc build lib/main.js --source-map --license licenses.txt",
     "test": "vitest --run",
     "all": "npm run typecheck && npm run format && npm run package && npm test"
   },
