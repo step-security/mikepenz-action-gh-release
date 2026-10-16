@@ -13,8 +13,7 @@
     "format-check": "prettier --check \"src/**/*.ts\" \"__tests__/**/*.ts\"",
     "package": "tsc && ncc build lib/main.js --source-map --license licenses.txt --minify",
     "test": "vitest --run",
-    "all": "npm run typecheck && npm run format && npm run package && npm test",
-    "fmtcheck": "prettier --check \"src/**/*.ts\" \"__tests__/**/*.ts\""
+    "all": "npm run typecheck && npm run format && npm run package && npm test"
   },
   "repository": {
     "type": "git",
